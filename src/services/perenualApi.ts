@@ -95,6 +95,8 @@ let gulfPlantsCache: Plant[] | null = null
 let gulfPlantsCacheTime: number = 0
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 async function fetchAllGulfPlants(token: string): Promise<Plant[]> {
   // Return cached data if fresh
   if (gulfPlantsCache && Date.now() - gulfPlantsCacheTime < CACHE_TTL) {
@@ -111,6 +113,11 @@ async function fetchAllGulfPlants(token: string): Promise<Plant[]> {
     )
 
     if (!response.ok) {
+      if (response.status === 429) {
+        // Rate limited - wait and retry
+        await delay(2000)
+        continue
+      }
       throw new Error(`API Error: ${response.status}`)
     }
 
@@ -123,6 +130,9 @@ async function fetchAllGulfPlants(token: string): Promise<Plant[]> {
 
     // Safety limit to prevent infinite loops
     if (page > 50) break
+
+    // Rate limit: wait between requests to avoid 429
+    if (hasMore) await delay(500)
   }
 
   // Transform and cache
