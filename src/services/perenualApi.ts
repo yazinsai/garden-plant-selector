@@ -54,7 +54,7 @@ function transformTreflePlant(treflePlant: TreflePlant): Plant {
   }
 }
 
-// Client-side filter for fields Trefle doesn't support
+// Client-side filter for fields Trefle doesn't support server-side
 function applyClientFilters(plants: Plant[], params: PlantListParams): Plant[] {
   let filtered = plants
 
@@ -100,49 +100,47 @@ export async function fetchPlants(params: PlantListParams): Promise<PlantListRes
   const currentPage = params.page || 1
   const region = params.region || 'gulf'
 
-  // Build search params
+  // Build search params - use species endpoint for both modes
+  // This allows us to use all filters (flower_color, growth_habit, etc.)
   const searchParams = new URLSearchParams({
     token,
     page: String(currentPage),
   })
 
-  let endpoint: string
+  let endpoint = '/species'
 
+  // Gulf mode: filter by GST (Gulf States) distribution
   if (region === 'gulf') {
-    // Gulf mode: fetch from GST (Gulf States) distribution - single page at a time
-    endpoint = '/distributions/gst/plants'
+    searchParams.set('filter[distribution]', 'gst')
+  }
 
-    // Search by name if provided
-    if (params.q) {
-      searchParams.set('filter[common_name]', params.q)
+  // Search by name
+  if (params.q) {
+    endpoint = '/plants/search'
+    searchParams.set('q', params.q)
+    // Keep distribution filter for Gulf mode search
+    if (region === 'gulf') {
+      searchParams.set('filter[distribution]', 'gst')
     }
-  } else {
-    // Global mode: use species endpoint
-    endpoint = '/species'
+  }
 
-    if (params.q) {
-      endpoint = '/plants/search'
-      searchParams.set('q', params.q)
+  // Plant type filter (server-side via growth_habit)
+  if (params.plantType && params.plantType !== 'all') {
+    const habitMap: Record<string, string> = {
+      tree: 'tree',
+      shrub: 'shrub',
+      herb: 'herb',
+      vine: 'liana',
+      grass: 'graminoid',
     }
+    if (habitMap[params.plantType]) {
+      searchParams.set('filter[growth_habit]', habitMap[params.plantType])
+    }
+  }
 
-    // Plant type filter (server-side, global only)
-    if (params.plantType && params.plantType !== 'all') {
-      const habitMap: Record<string, string> = {
-        tree: 'Tree',
-        shrub: 'Shrub',
-        herb: 'Herb',
-        vine: 'Vine',
-        grass: 'Graminoid',
-      }
-      if (habitMap[params.plantType]) {
-        searchParams.set('filter[growth_habit]', habitMap[params.plantType])
-      }
-    }
-
-    // Flower color filter (server-side, global only)
-    if (params.flowerColor && params.flowerColor !== 'all') {
-      searchParams.set('filter[flower_color]', params.flowerColor)
-    }
+  // Flower color filter (server-side)
+  if (params.flowerColor && params.flowerColor !== 'all') {
+    searchParams.set('filter[flower_color]', params.flowerColor)
   }
 
   const response = await fetch(`${TREFLE_BASE_URL}${endpoint}?${searchParams}`)
@@ -154,7 +152,7 @@ export async function fetchPlants(params: PlantListParams): Promise<PlantListRes
 
   const trefleResponse: TrefleListResponse = await response.json()
 
-  // Transform then apply client-side filters
+  // Transform then apply client-side filters (watering, sunlight, cycle)
   let plants = trefleResponse.data.map(transformTreflePlant)
   plants = applyClientFilters(plants, params)
 
