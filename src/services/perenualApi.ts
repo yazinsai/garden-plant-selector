@@ -54,6 +54,41 @@ function transformTreflePlant(treflePlant: TreflePlant): Plant {
   }
 }
 
+// Client-side filter for fields Trefle doesn't support
+function applyClientFilters(plants: Plant[], params: PlantListParams): Plant[] {
+  let filtered = plants
+
+  // Watering filter (client-side - Trefle doesn't have this)
+  if (params.watering && params.watering !== 'all') {
+    const wateringMap: Record<string, WateringLevel> = {
+      none: 'None',
+      minimum: 'Minimum',
+      average: 'Average',
+      frequent: 'Frequent',
+    }
+    const targetLevel = wateringMap[params.watering.toLowerCase()]
+    if (targetLevel) {
+      filtered = filtered.filter(p => p.watering === targetLevel)
+    }
+  }
+
+  // Sunlight filter (client-side)
+  if (params.sunlight && params.sunlight !== 'all') {
+    filtered = filtered.filter(p =>
+      p.sunlight.some(s => s.toLowerCase().includes(params.sunlight!.toLowerCase()))
+    )
+  }
+
+  // Cycle filter (client-side)
+  if (params.cycle && params.cycle !== 'all') {
+    filtered = filtered.filter(p =>
+      p.cycle.toLowerCase() === params.cycle!.toLowerCase()
+    )
+  }
+
+  return filtered
+}
+
 export async function fetchPlants(params: PlantListParams): Promise<PlantListResponse> {
   const token = import.meta.env.VITE_TREFLE_TOKEN
 
@@ -119,11 +154,15 @@ export async function fetchPlants(params: PlantListParams): Promise<PlantListRes
 
   const trefleResponse: TrefleListResponse = await response.json()
 
+  // Transform then apply client-side filters
+  let plants = trefleResponse.data.map(transformTreflePlant)
+  plants = applyClientFilters(plants, params)
+
   const total = trefleResponse.meta.total
   const lastPage = Math.ceil(total / perPage)
 
   return {
-    data: trefleResponse.data.map(transformTreflePlant),
+    data: plants,
     to: Math.min(currentPage * perPage, total),
     per_page: perPage,
     current_page: currentPage,
