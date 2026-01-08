@@ -121,12 +121,16 @@ export function FilterBar() {
           onChange={(e) => setPlantType(e.target.value)}
           options={plantTypeOptions}
           className="w-28"
+          disabled={region === 'gulf'}
+          title={region === 'gulf' ? 'Plant type filter only available in All Plants mode' : undefined}
         />
         <Select
           value={flowerColor}
           onChange={(e) => setFlowerColor(e.target.value)}
           options={flowerColorOptions}
           className="w-28"
+          disabled={region === 'gulf'}
+          title={region === 'gulf' ? 'Flower color filter only available in All Plants mode' : undefined}
         />
         <Select
           value={watering}
