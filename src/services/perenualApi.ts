@@ -54,97 +54,6 @@ function transformTreflePlant(treflePlant: TreflePlant): Plant {
   }
 }
 
-// Client-side filter for Gulf plants
-function applyClientFilters(plants: Plant[], params: PlantListParams): Plant[] {
-  let filtered = plants
-
-  // Search filter
-  if (params.q) {
-    const query = params.q.toLowerCase()
-    filtered = filtered.filter(p =>
-      p.common_name.toLowerCase().includes(query) ||
-      p.scientific_name.some(s => s.toLowerCase().includes(query))
-    )
-  }
-
-  // Plant type filter (based on family heuristics since we don't have growth_habit in list)
-  if (params.plantType && params.plantType !== 'all') {
-    const treeFamilies = ['Fagaceae', 'Pinaceae', 'Cupressaceae', 'Moraceae', 'Oleaceae', 'Sapindaceae', 'Betulaceae', 'Salicaceae', 'Meliaceae', 'Anacardiaceae']
-    const shrubFamilies = ['Rosaceae', 'Caprifoliaceae', 'Ericaceae', 'Hydrangeaceae', 'Rhamnaceae']
-    const grassFamilies = ['Poaceae', 'Cyperaceae', 'Juncaceae']
-    const vineFamilies = ['Vitaceae', 'Convolvulaceae', 'Passifloraceae']
-
-    filtered = filtered.filter(p => {
-      const family = (p as Plant & { family?: string }).family || ''
-      switch (params.plantType) {
-        case 'tree': return treeFamilies.includes(family)
-        case 'shrub': return shrubFamilies.includes(family)
-        case 'grass': return grassFamilies.includes(family)
-        case 'vine': return vineFamilies.includes(family)
-        case 'herb': return !treeFamilies.includes(family) && !shrubFamilies.includes(family) && !grassFamilies.includes(family) && !vineFamilies.includes(family)
-        default: return true
-      }
-    })
-  }
-
-  return filtered
-}
-
-// Store for Gulf plants cache (avoid refetching all pages)
-let gulfPlantsCache: Plant[] | null = null
-let gulfPlantsCacheTime: number = 0
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-async function fetchAllGulfPlants(token: string): Promise<Plant[]> {
-  // Return cached data if fresh
-  if (gulfPlantsCache && Date.now() - gulfPlantsCacheTime < CACHE_TTL) {
-    return gulfPlantsCache
-  }
-
-  const allPlants: TreflePlant[] = []
-  let page = 1
-  let hasMore = true
-
-  while (hasMore) {
-    const response = await fetch(
-      `${TREFLE_BASE_URL}/distributions/gst/plants?token=${token}&page=${page}`
-    )
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        // Rate limited - wait and retry
-        await delay(2000)
-        continue
-      }
-      throw new Error(`API Error: ${response.status}`)
-    }
-
-    const data: TrefleListResponse = await response.json()
-    allPlants.push(...data.data)
-
-    // Check if there are more pages (20 per page)
-    hasMore = data.data.length === 20 && allPlants.length < data.meta.total
-    page++
-
-    // Safety limit to prevent infinite loops
-    if (page > 50) break
-
-    // Rate limit: wait between requests to avoid 429
-    if (hasMore) await delay(500)
-  }
-
-  // Transform and cache
-  gulfPlantsCache = allPlants.map(p => ({
-    ...transformTreflePlant(p),
-    family: p.family, // Keep family for filtering
-  }))
-  gulfPlantsCacheTime = Date.now()
-
-  return gulfPlantsCache
-}
-
 export async function fetchPlants(params: PlantListParams): Promise<PlantListResponse> {
   const token = import.meta.env.VITE_TREFLE_TOKEN
 
@@ -156,59 +65,49 @@ export async function fetchPlants(params: PlantListParams): Promise<PlantListRes
   const currentPage = params.page || 1
   const region = params.region || 'gulf'
 
-  // Gulf mode: fetch all Gulf plants and filter client-side
-  if (region === 'gulf') {
-    const allGulfPlants = await fetchAllGulfPlants(token)
-    const filtered = applyClientFilters(allGulfPlants, params)
-
-    // Client-side pagination
-    const total = filtered.length
-    const lastPage = Math.ceil(total / perPage)
-    const startIndex = (currentPage - 1) * perPage
-    const pageData = filtered.slice(startIndex, startIndex + perPage)
-
-    return {
-      data: pageData,
-      to: Math.min(currentPage * perPage, total),
-      per_page: perPage,
-      current_page: currentPage,
-      from: startIndex + 1,
-      last_page: lastPage,
-      total,
-    }
-  }
-
-  // Global mode: use species endpoint with server-side filters
+  // Build search params
   const searchParams = new URLSearchParams({
     token,
     page: String(currentPage),
   })
 
-  let endpoint = '/species'
+  let endpoint: string
 
-  // Search
-  if (params.q) {
-    endpoint = '/plants/search'
-    searchParams.set('q', params.q)
-  }
+  if (region === 'gulf') {
+    // Gulf mode: fetch from GST (Gulf States) distribution - single page at a time
+    endpoint = '/distributions/gst/plants'
 
-  // Plant type filter (server-side)
-  if (params.plantType && params.plantType !== 'all') {
-    const habitMap: Record<string, string> = {
-      tree: 'Tree',
-      shrub: 'Shrub',
-      herb: 'Herb',
-      vine: 'Vine',
-      grass: 'Graminoid',
+    // Search by name if provided
+    if (params.q) {
+      searchParams.set('filter[common_name]', params.q)
     }
-    if (habitMap[params.plantType]) {
-      searchParams.set('filter[growth_habit]', habitMap[params.plantType])
-    }
-  }
+  } else {
+    // Global mode: use species endpoint
+    endpoint = '/species'
 
-  // Flower color filter (server-side)
-  if (params.flowerColor && params.flowerColor !== 'all') {
-    searchParams.set('filter[flower_color]', params.flowerColor)
+    if (params.q) {
+      endpoint = '/plants/search'
+      searchParams.set('q', params.q)
+    }
+
+    // Plant type filter (server-side, global only)
+    if (params.plantType && params.plantType !== 'all') {
+      const habitMap: Record<string, string> = {
+        tree: 'Tree',
+        shrub: 'Shrub',
+        herb: 'Herb',
+        vine: 'Vine',
+        grass: 'Graminoid',
+      }
+      if (habitMap[params.plantType]) {
+        searchParams.set('filter[growth_habit]', habitMap[params.plantType])
+      }
+    }
+
+    // Flower color filter (server-side, global only)
+    if (params.flowerColor && params.flowerColor !== 'all') {
+      searchParams.set('filter[flower_color]', params.flowerColor)
+    }
   }
 
   const response = await fetch(`${TREFLE_BASE_URL}${endpoint}?${searchParams}`)
